@@ -8,20 +8,57 @@ THRUST, ROTATE_SPEED, BURN_RATE, FUEL_MAX = 60.0, 2.4, 22.0, 300.0
 MAX_SPEED_X, MAX_SPEED_Y, MAX_ANGLE = 25.0, 40.0, 0.25
 FOOT = 12
 
+# Fireworks state (used by on_landing, updated/drawn by Game)
+PARTICLES = []
+LANDING_POS = pygame.Vector2(WIDTH / 2, HEIGHT / 2)
+FIREWORK_COLORS = [(255, 220, 80), (255, 120, 80), (120, 220, 255), (150, 255, 150), (255, 140, 220)]
+
 
 def ship_color(fuel_ratio):
     """Return an (r, g, b) hull colour for the given fuel ratio (1.0 = full), or None for the default."""
-    pass
+    t = max(0.0, min(1.0, fuel_ratio))
+    full, empty = (230, 230, 240), (255, 50, 40)
+    return tuple(int(empty[i] + (full[i] - empty[i]) * t) for i in range(3))
 
 
 def on_landing(score):
     """Called after a successful landing with the points just earned; add fireworks or bonuses here."""
-    pass
+    count = min(160, 40 + score // 6)  # bigger scores -> bigger show
+    per_burst = max(10, count // 3)
+    for dx, dy in ((-45, -50), (0, -95), (45, -50)):
+        center = LANDING_POS + pygame.Vector2(dx, dy)
+        color = random.choice(FIREWORK_COLORS)
+        for _ in range(per_burst):
+            angle = random.uniform(0, math.tau)
+            speed = random.uniform(40, 170)
+            life = random.uniform(0.8, 1.6)
+            PARTICLES.append({
+                "pos": pygame.Vector2(center),
+                "vel": pygame.Vector2(math.cos(angle), math.sin(angle)) * speed,
+                "life": life,
+                "max_life": life,
+                "color": color,
+            })
+
+
+def update_particles(dt):
+    for p in PARTICLES:
+        p["vel"].y += 120 * dt  # light gravity on sparks
+        p["pos"] += p["vel"] * dt
+        p["life"] -= dt
+    PARTICLES[:] = [p for p in PARTICLES if p["life"] > 0]
+
+
+def draw_particles(screen):
+    for p in PARTICLES:
+        fade = max(0.0, p["life"] / p["max_life"])
+        color = tuple(int(c * fade) for c in p["color"])
+        pygame.draw.circle(screen, color, (int(p["pos"].x), int(p["pos"].y)), 2 if fade < 0.5 else 3)
 
 
 def bonus_life_threshold():
     """Return a score value at which the player earns an extra life, or None to disable bonus lives."""
-    pass
+    return 1500
 
 
 def make_terrain():
@@ -64,6 +101,7 @@ class Game:
         self.vel = pygame.Vector2(random.uniform(-20, 20), 0)
         self.angle, self.fuel, self.thrusting = 0.0, FUEL_MAX, False
         self.state, self.message = "fly", ""
+        PARTICLES.clear()
 
     def pad_under(self):
         for x1, x2, y, mult in self.pads:
@@ -74,10 +112,14 @@ class Game:
     def touchdown(self):
         pad = self.pad_under()
         angle = wrap_angle(self.angle)
-        if pad and abs(self.vel.y) <= MAX_SPEED_Y and abs(angle) <= MAX_ANGLE:
+        if (pad
+                and abs(self.vel.x) <= MAX_SPEED_X
+                and abs(self.vel.y) <= MAX_SPEED_Y
+                and abs(angle) <= MAX_ANGLE):
             earned = int((100 + self.fuel) * pad[3])
             self.score += earned
             self.state, self.message = "landed", f"Perfect landing! +{earned}  (Space = next level)"
+            LANDING_POS.update(self.pos.x, self.pos.y + FOOT)
             on_landing(earned)
             return
         self.lives -= 1
@@ -91,6 +133,7 @@ class Game:
         self.message = f"Crashed: {reason}!  " + ("Space = retry" if self.lives > 0 else "Game over - R = restart")
 
     def update(self, dt, keys):
+        update_particles(dt)  # keep fireworks animating even after landing
         if self.state != "fly":
             return
         threshold = bonus_life_threshold()
@@ -136,6 +179,7 @@ class Game:
             pygame.draw.polygon(screen, color, self.ship_points())
         else:
             pygame.draw.circle(screen, (255, 120, 40), self.pos, 24, 3)
+        draw_particles(screen)
         ok_x = abs(self.vel.x) <= MAX_SPEED_X
         ok_y = abs(self.vel.y) <= MAX_SPEED_Y
         ok_a = abs(wrap_angle(self.angle)) <= MAX_ANGLE
